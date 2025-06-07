@@ -1,0 +1,14 @@
+services:
+  qa-bot:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./app.py:/app/app.py
+      - ./data:/app/data
+      - ./vectorstore:/app/vectorstore
+      - ./.env:/app/.env
+    environment:
+      - PYTHONPATH=/app
+    stdin_open: true
+    tty: true
