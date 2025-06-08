@@ -4,6 +4,9 @@ import os
 
 import streamlit as st
 import PyPDF2  # PDF読み取り、実ファイルを使わずメモリ上にPDFなどのデータを一時的に保存して処理するライブラリ
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_openai import OpenAIEmbeddings
+import tiktoken
 
 load_dotenv()
 
@@ -33,6 +36,60 @@ def extract_text_from_pdf(pdf_file):
     except Exception as e:
         st.error(f"PDFの読み込みでエラーが発生しました: {str(e)}")
         return None
+
+
+@st.cache_data
+def split_text_into_chunks(text, chunk_size=1000, chunk_overlap=200):
+    """
+    受け取ったテキストを指定サイズのチャンクに分割する関数
+
+    Args:
+        text(str): 分割対象テキスト
+        chunk_size(int): 各チャンクの最大文字数
+        chunk_overlap(int): チャンク間の重複文字数
+
+    Returns:
+        list: 分割されたテキストチャンクのリスト
+    """
+    try:
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            # len(文字数)ベースでチャンクサイズを指定
+            length_function=len,
+            separators=["\n\n", "\n", " ", ""],
+        )
+
+        chunks = text_splitter.split_text(text)
+
+        return chunks
+
+    except Exception as e:
+        st.error(f"テキスト分割でエラーが発生しました: {str(e)}")
+        return []
+
+
+def count_tokens(text, model="gpt-4o-mini"):
+    """
+    テキストのトークン数をカウントする関数
+
+    Args:
+        text(str): カウント対象のテキスト
+        model(str): 使用するモデル
+
+    Returns:
+        int: トークン数
+    """
+    # TODO
+    # なぜカウントする関数が必要？
+    # → API制限、コスト見積、文脈制御のため
+
+    try:
+        encoding = tiktoken.encoding_for_model(model)
+        return len(encoding.encode(text))
+    except Exception as e:
+        st.error(f"トークンカウントでエラーが発生しました: {str(e)}")
+        return 0
 
 
 def main():
