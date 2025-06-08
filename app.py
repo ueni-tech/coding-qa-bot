@@ -92,6 +92,22 @@ def count_tokens(text, model="gpt-4o-mini"):
         return 0
 
 
+@st.cache_resource
+def initialize_embeddings():
+    """Open AI Embeddingsを初期化する関数(@st.cache_resourceでキャッシュ)"""
+    try:
+        # NOTE
+        # api_keyには型SecretStr | Noneが要求されているがos.getenv("OPEN_API_KEY")でいいみたい
+        embeddings = OpenAIEmbeddings(
+            model="text-embedding-3-small", api_key=os.getenv("OPEN_API_KEY")
+        )
+
+        return embeddings
+    except Exception as e:
+        st.error(f"Embedding初期化でエラーが発生しました: {str(e)}")
+        return None
+
+
 def main():
     """
     Streamlitアプリケーションのメイン関数
