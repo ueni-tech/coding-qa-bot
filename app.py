@@ -219,9 +219,12 @@ def main():
 
             with st.spinner("ベクトル検索を実施中..."):
                 try:
+                    # NOTE: 質問文をベクトル化
                     question_embeddig = embeddings.embed_query(user_question)
 
+                    # NOTE: （開発中）ベクトル化対象のチャンクを先頭10個に制限
                     chunks = st.session_state.text_chunks[:10]
+                    # NOTE: PDFからチャンク化したテキストをベクトル化
                     chunk_embeddings = embeddings.embed_documents(chunks)
 
                     st.success("✅ ベクトル化完了")
