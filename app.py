@@ -1,273 +1,185 @@
+import gc
 import os
 import shutil
-import PyPDF2
+from pathlib import Path
 
-import tiktoken
+import PyPDF2
 import streamlit as st
+import tiktoken
 from dotenv import load_dotenv
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
-from langchain.vectorstores import Chroma
+from chromadb.config import Settings
+from langchain_community.vectorstores import Chroma
 
+# ─────────────────────────────────────────────────────────────────────
+# 0. 定数・設定
+# ─────────────────────────────────────────────────────────────────────
 load_dotenv()
 
+PERSIST_DIR = Path(__file__).parent / "vectorstore"
 
-@st.cache_data  # 関数の戻り値（PDFから抽出したテキスト）をキャッシュするためのデコレータ
+CHROMA_SETTINGS = Settings(
+    allow_reset=True,  # reset() を許可（開発用）
+    is_persistent=True,  # 永続モード
+    persist_directory=str(PERSIST_DIR),
+    anonymized_telemetry=False,  # テレメトリ無効
+)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 1. ユーティリティ
+# ─────────────────────────────────────────────────────────────────────
+@st.cache_data
 def extract_text_from_pdf(pdf_file):
-    """
-    PDFファイルを受け取りその中からテキスト抽出する関数
-
-    Args:
-        pdf_file: アップロードされたPDFファイル
-
-    Returns:
-        str: 抽出されたテキスト
-    """
-
-    try:
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-
-        text = ""
-        for page_num in range(len(pdf_reader.pages)):
-            page = pdf_reader.pages[page_num]
-            text += page.extract_text() + "\n"
-
-        return text
-
-    except Exception as e:
-        st.error(f"PDFの読み込みでエラーが発生しました: {str(e)}")
-        return None
+    reader = PyPDF2.PdfReader(pdf_file)
+    return "\n".join((page.extract_text() or "") for page in reader.pages)
 
 
 @st.cache_data
-def split_text_into_chunks(text, chunk_size=1000, chunk_overlap=200):
-    """
-    受け取ったテキストを指定サイズのチャンクに分割する関数
-
-    Args:
-        text(str): 分割対象テキスト
-        chunk_size(int): 各チャンクの最大文字数
-        chunk_overlap(int): チャンク間の重複文字数
-
-    Returns:
-        list: 分割されたテキストチャンクのリスト
-    """
-    try:
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            # len(文字数)ベースでチャンクサイズを指定
-            length_function=len,
-            separators=["\n\n", "\n", " ", ""],
-        )
-
-        chunks = text_splitter.split_text(text)
-
-        return chunks
-
-    except Exception as e:
-        st.error(f"テキスト分割でエラーが発生しました: {str(e)}")
-        return []
+def split_text(text: str, size=1000, overlap=200):
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=size,
+        chunk_overlap=overlap,
+        separators=["\n\n", "\n", " ", ""],
+        length_function=len,
+    )
+    return splitter.split_text(text)
 
 
-def count_tokens(text, model="gpt-3.5-turbo"):
-    """
-    テキストのトークン数をカウントする関数
-
-    Args:
-        text(str): カウント対象のテキスト
-        model(str): 使用するモデル
-
-    Returns:
-        int: トークン数
-    """
-    # TODO
-    # なぜカウントする関数が必要？
-    # → API制限、コスト見積、文脈制御のため
-
-    try:
-        encoding = tiktoken.encoding_for_model(model)
-        return len(encoding.encode(text))
-    except Exception as e:
-        st.error(f"トークンカウントでエラーが発生しました: {str(e)}")
-        return 0
+def count_tokens(text: str, model="gpt-3.5-turbo"):
+    enc = tiktoken.encoding_for_model(model)
+    return len(enc.encode(text))
 
 
 @st.cache_resource
-def initialize_embeddings():
-    """Open AI Embeddingsを初期化する関数(@st.cache_resourceでキャッシュ)"""
-    try:
-        # NOTE
-        # api_keyには型SecretStr | Noneが要求されているがos.getenv("OPEN_API_KEY")でいいみたい
-        embeddings = OpenAIEmbeddings(
-            model="text-embedding-3-small", openai_api_key=os.getenv("OPENAI_API_KEY")
-        )
-
-        return embeddings
-    except Exception as e:
-        st.error(f"Embedding初期化でエラーが発生しました: {str(e)}")
-        return None
+def init_embeddings():
+    return OpenAIEmbeddings(
+        model="text-embedding-3-small",
+        openai_api_key=os.getenv("OPENAI_API_KEY"),
+    )
 
 
-def create_vector_store(text_chunks, embeddings, persist_directory="./vectorstore"):
+# ─────────────────────────────────────────────────────────────────────
+# 2. VectorStore 操作
+# ─────────────────────────────────────────────────────────────────────
+def cleanup_dirs(keep_uuid: str | None):
+    """persist_directory 配下で keep_uuid 以外のフォルダを削除"""
+    if not PERSIST_DIR.exists():
+        return
+    for p in PERSIST_DIR.iterdir():
+        if p.is_dir() and p.name != keep_uuid:
+            shutil.rmtree(p)
+
+
+def rebuild_vectorstore(chunks, embeds):
     """
-    ChromaDBベクトルストアを作成する関数
-
-    Args:
-        text_chunks(list): テキストチャンクのリスト
-        embeddings: OpenAIEmbeddingsのオブジェクト
-        persist_directory(str): データ永続化ディレクトリへのパス
-
-    Return:
-        Chroma: 作成されたベクトルストア
+    既存接続をリセットして再構築。
+    1) 接続クローズ / reset
+    2) 新規コレクション作成
+    3) 古い UUID フォルダ削除
     """
-    try:
-        if os.path.exists(persist_directory):
-            shutil.rmtree(persist_directory)
+    # ① 既存接続を安全に閉じる
+    vs_old = st.session_state.pop("vectorstore", None)
+    if vs_old:
+        try:
+            vs_old._client.reset()  # allow_reset=True 必須
+        except Exception:
+            pass
+        del vs_old
+        gc.collect()
 
-        vectorstore = Chroma.from_texts(
-            texts=text_chunks, embedding=embeddings, persist_directory=persist_directory
+    # ② 新しいベクトルストアを生成
+    vs_new = Chroma.from_texts(
+        texts=chunks,
+        embedding=embeds,
+        client_settings=CHROMA_SETTINGS,
+    )
+    vs_new.persist()
+    st.session_state.vectorstore = vs_new
+
+    # ③ 古くなった UUID フォルダを削除
+    current_uuid = vs_new._collection.id  # 今使っている UUID
+    cleanup_dirs(current_uuid)
+
+    return vs_new
+
+
+def load_vectorstore(embeds):
+    if PERSIST_DIR.exists():
+        return Chroma(
+            persist_directory=str(PERSIST_DIR),
+            embedding_function=embeds,
+            client_settings=CHROMA_SETTINGS,
         )
-
-        vectorstore.persist()
-
-        return vectorstore
-
-    except Exception as e:
-        st.error(f"ベクトルストア作成でエラーが発生しました: {str(e)}")
-        return None
+    return None
 
 
+# ─────────────────────────────────────────────────────────────────────
+# 3. Streamlit UI
+# ─────────────────────────────────────────────────────────────────────
 def main():
-    """
-    Streamlitアプリケーションのメイン関数
-    """
-
-    # NOTE: ページのmeta情報設定
     st.set_page_config(
         page_title="コーディング規約QAボット", page_icon="🤖", layout="wide"
     )
-
     st.title("🤖 コーディング規約QAボット")
-    st.markdown("社内のコーディング規約について質問してください！")
+    embeds = init_embeddings()
+    if not embeds:
+        st.stop()
 
+    # 既存ベクトルストア読み込み
+    if vs := load_vectorstore(embeds):
+        st.session_state.vectorstore = vs
+        st.success("既存ベクトルストアを読み込みました ✅")
+
+    # ── サイドバー ────────────────────────────────────────────
     with st.sidebar:
         st.header("設定")
-        st.info("OpenAI APIキーが設定されているか確認してください")
+        pdf = st.file_uploader("📄 規約 PDF", type="pdf")
+        size = st.slider("チャンクサイズ", 500, 2000, 1000, 100)
+        over = st.slider("チャンク重複", 0, 500, 200, 50)
+        top_k = st.slider("検索件数", 1, 10, 3)
 
-        api_key = os.getenv("OPENAI_API_KEY")
-        if api_key:
-            st.success("✅ APIキーが設定されています")
-        else:
-            st.error("❌ APIキーが設定されていません")
+        if st.button("💣 ベクトルストアをリセット"):
+            # 既存接続のみを reset し、フォルダ掃除も行う
+            if "vectorstore" in st.session_state:
+                uuid_now = st.session_state.vectorstore._collection.id
+                st.session_state.vectorstore._client.reset()
+                cleanup_dirs(uuid_now)  # 空だが今使う UUID は残す
+                del st.session_state.vectorstore
+            st.success("ベクトルストアをリセットしました")
+            st.rerun()
 
-        st.divider()
+    # ── PDF アップロード処理 ────────────────────────────────
+    if pdf:
+        with st.spinner("PDF 解析中..."):
+            text = extract_text_from_pdf(pdf)
+            chunks = split_text(text, size, over)
+            rebuild_vectorstore(chunks, embeds)
+            st.success(
+                f"✅ ベクトルストア再構築完了 | 文字数 {len(text):,} | "
+                f"チャンク {len(chunks)} | 推定トークン {count_tokens(text):,}"
+            )
 
-        st.subheader("📄 PDFアップロード")
-        uploaded_file = st.file_uploader(
-            "コーディング規約PDFをアップロード",
-            type="pdf",
-            help="コーディング規約が記載されたPDFファイルをアップロードしてください",
-        )
-
-        st.subheader("⚙️ テキスト分割設定")
-        chunk_size = st.slider(
-            "チャンクサイズ",
-            min_value=500,
-            max_value=2000,
-            value=1000,
-            step=100,
-            help="各テキストチャンクの最大文字数",
-        )
-
-        chunk_overlap = st.slider(
-            "チャンク重複",
-            min_value=0,
-            max_value=500,
-            value=200,
-            step=50,
-            help="隣接するチャンクの重複文字数",
-        )
-
-        if uploaded_file is not None:
-            with st.spinner("PDFを読み込み中"):
-                extract_text = extract_text_from_pdf(uploaded_file)
-
-                if extract_text:
-                    text_chunks = split_text_into_chunks(
-                        extract_text, chunk_size=chunk_size, chunk_overlap=chunk_overlap
-                    )
-
-                    if text_chunks:
-                        st.success("✅ PDF読み込み完了")
-
-                        # NOTE: Streamlitは再実行型のため、PDFテキストやchunkテキストをセッションに保持して再描画時も維持
-                        st.session_state.pdf_text = extract_text
-                        st.session_state.text_chunks = text_chunks
-
-                        st.info(
-                            f"""
-                        📊 **処理結果:**
-                        - 総文字数: {len(extract_text):,}
-                        - チャンク数: {len(text_chunks)}
-                        - 推定トークン数: {count_tokens(extract_text):,}
-                                """
-                        )
-
-                        with st.expander("📖 チャンクプレビュー"):
-                            for i, chunk in enumerate(text_chunks[:3]):
-                                st.write(f"**チャンク {i+1}**")
-                                st.text_area(
-                                    f"チャンク{i+1}の内容",
-                                    chunk[:300] + "..." if len(chunk) > 300 else chunk,
-                                    height=100,
-                                    disabled=True,
-                                    key=f"chunk_{i}",
-                                )
-
-                            if len(text_chunks) > 3:
-                                st.info(f"... 他 {len(text_chunks) - 3} 個のチャンク")
-
-    st.subheader("質問を入力してください")
-
-    if "text_chunks" not in st.session_state:
-        st.warning("📄 まずサイドバーからコーディング規約PDFをアップロードしてください")
+    # ── 質問 UI ──────────────────────────────────────────────
+    st.subheader("質問")
+    if "vectorstore" not in st.session_state:
+        st.info("まず PDF をアップロードしてください")
         return
 
-    embeddings = initialize_embeddings()
-    if not embeddings:
-        st.error("❌ Embeddings初期化に失敗しました。APIキーを確認してください。")
-        return
-
-    user_question = st.text_input(
-        "質問:", placeholder="例: pythonの変数命名規則を教えて"
-    )
-
-    if st.button("質問する"):
-        if user_question:
-            st.info(f"質問: {user_question}")
-
-            with st.spinner("ベクトル検索を実施中..."):
-                try:
-                    # NOTE: 質問文をベクトル化
-                    question_embeddig = embeddings.embed_query(user_question)
-
-                    # NOTE: （開発中）ベクトル化対象のチャンクを先頭10個に制限
-                    chunks = st.session_state.text_chunks[:10]
-                    # NOTE: PDFからチャンク化したテキストをベクトル化
-                    chunk_embeddings = embeddings.embed_documents(chunks)
-
-                    st.success("✅ ベクトル化完了")
-                    st.info(f"検索対象チャンク数: {len(chunks)}")
-                    st.warning(
-                        "⚠️ まだベクトルデータベースは実装されていません（次のステップで実装します）"
-                    )
-
-                except Exception as e:
-                    st.error(f"ベクトル化でエラーが発生しました: {str(e)}")
-
-        else:
-            st.error("質問してください")
+    q = st.text_input("質問を入力", placeholder="例: Python の変数命名規則は？")
+    if st.button("検索"):
+        if not q:
+            st.warning("質問を入力してください")
+            return
+        with st.spinner("検索中…"):
+            res = st.session_state.vectorstore.similarity_search_with_score(q, k=top_k)
+        if not res:
+            st.info("関連文書が見つかりません")
+            return
+        for i, (doc, score) in enumerate(res, 1):
+            with st.expander(f"{i}. score {score:.3f}"):
+                st.write(doc.page_content)
 
 
 if __name__ == "__main__":
