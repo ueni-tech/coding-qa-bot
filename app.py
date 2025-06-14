@@ -1,12 +1,13 @@
-from dotenv import load_dotenv
-from io import BytesIO  # バイト列をファイルのように扱うためのモジュール
 import os
+import shutil
+import PyPDF2
 
+import tiktoken
 import streamlit as st
-import PyPDF2  # PDF読み取り、実ファイルを使わずメモリ上にPDFなどのデータを一時的に保存して処理するライブラリ
+from dotenv import load_dotenv
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
-import tiktoken
+from langchain.vectorstores import Chroma
 
 load_dotenv()
 
@@ -99,12 +100,41 @@ def initialize_embeddings():
         # NOTE
         # api_keyには型SecretStr | Noneが要求されているがos.getenv("OPEN_API_KEY")でいいみたい
         embeddings = OpenAIEmbeddings(
-            model="text-embedding-3-small", api_key=os.getenv("OPEN_API_KEY")
+            model="text-embedding-3-small", openai_api_key=os.getenv("OPENAI_API_KEY")
         )
 
         return embeddings
     except Exception as e:
         st.error(f"Embedding初期化でエラーが発生しました: {str(e)}")
+        return None
+
+
+def create_vector_store(text_chunks, embeddings, persist_directory="./vectorstore"):
+    """
+    ChromaDBベクトルストアを作成する関数
+
+    Args:
+        text_chunks(list): テキストチャンクのリスト
+        embeddings: OpenAIEmbeddingsのオブジェクト
+        persist_directory(str): データ永続化ディレクトリへのパス
+
+    Return:
+        Chroma: 作成されたベクトルストア
+    """
+    try:
+        if os.path.exists(persist_directory):
+            shutil.rmtree(persist_directory)
+
+        vectorstore = Chroma.from_texts(
+            texts=text_chunks, embedding=embeddings, persist_directory=persist_directory
+        )
+
+        vectorstore.persist()
+
+        return vectorstore
+
+    except Exception as e:
+        st.error(f"ベクトルストア作成でエラーが発生しました: {str(e)}")
         return None
 
 
