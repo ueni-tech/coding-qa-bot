@@ -1,16 +1,27 @@
+version: "3.9"
+
 services:
   qa-bot:
     build: .
+    # Streamlit を明示起動
+    command: streamlit run app.py --server.port 8501 --server.address 0.0.0.0
     ports:
       - "8501:8501"
     volumes:
-      - .:/app
-      - /app/.venv
-      - /app/__pycache__
-      - /app/.git
+      # ① アプリのソースコードは bind-mount でホットリロード
+      - ./:/app:cached          # Linux なら :cached を外しても OK
+      # ② Chroma の永続領域は named-volume で維持
+      - vectorstore:/app/vectorstore
     environment:
+      # アプリ側
       - PYTHONPATH=/app
+      - OPENAI_API_KEY=${OPENAI_API_KEY}   # .env から読み込む想定
+      - ALLOW_RESET=true                   # Chroma の全削除を許可（開発用）
+      # Streamlit のホットリロード
       - STREAMLIT_SERVER_RUN_ON_SAVE=true
-      - STREAMLIT_SERVER_FILE_WATCHER_TYPE=auto
+      - STREAMLIT_SERVER_FILE_WATCHER_TYPE=poll
     stdin_open: true
     tty: true
+
+volumes:
+  vectorstore:            # named-volume の宣言。実体は Docker が管理
