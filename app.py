@@ -43,6 +43,8 @@ CHROMA_SETTINGS = Settings(
     anonymized_telemetry=False,
 )
 
+ENBEDDING_MODEL = "text-embedding-3-small"
+
 # RAG用プロンプトテンプレート
 RAG_PROMPT_TEMPLATE = """\
 あなたは優秀なコーディング規約アシスタントです。
@@ -91,7 +93,7 @@ def count_tokens(text: str, model="gpt-3.5-turbo"):
 @st.cache_resource
 def init_embeddings():
     return OpenAIEmbeddings(
-        model="text-embedding-3-small",
+        model=ENBEDDING_MODEL,
         openai_api_key=os.getenv("OPENAI_API_KEY"),
     )
 
@@ -116,7 +118,7 @@ def format_docs(docs):
 def create_rag_chain(vectorstore, llm):
     """RAGチェーンを作成する関数"""
     retriever = vectorstore.as_retriever(
-        search_type="simikarity", search_kwargs={"k": 3}
+        search_type="similarity", search_kwargs={"k": 3}
     )
 
     prompt = PromptTemplate.from_template(RAG_PROMPT_TEMPLATE)
@@ -287,7 +289,14 @@ def main():
         with st.spinner("PDF 解析中..."):
             text = extract_text_from_pdf(pdf)
             chunks = split_text(text, size, over)
-            rebuild_vectorstore(chunks, embeds)
+            vs = rebuild_vectorstore(chunks, embeds)
+
+            # RAGチェーンを構築
+            current_llm = st.session_state.get("llm", llm)
+            rag_chain, retriever = create_rag_chain(vs, current_llm)
+            st.session_state.rag_chain = rag_chain
+            st.session_state.retriever = retriever
+
             st.success(
                 f"✅ ベクトルストア構築完了 | 文字数 {len(text):,} | "
                 f"チャンク {len(chunks)} | 推定トークン {count_tokens(text):,}"
@@ -297,22 +306,122 @@ def main():
     st.subheader("質問")
     if "vectorstore" not in st.session_state:
         st.warning("まずコーディング規約PDFをアップロードしてください")
+        st.info(
+            """
+        **使用方法:**
+        1. サイドバーからPDFファイルをアップロード
+        2. チャンクサイズや検索設定を調整（オプション）
+        3. 下記のテキストボックスに質問を入力
+        4. 「🔍 RAGで回答生成」ボタンをクリック
+        """
+        )
         return
 
-    q = st.text_input("質問を入力", placeholder="例: Python の変数命名規則は？")
-    st.caption(f"💡 選択中のLLM: {model_choice}")
-    if st.button("検索"):
-        if not q:
-            st.warning("質問を入力してください")
+    # 質問入力エリア
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        question = st.text_input(
+            "質問を入力してください",
+            placeholder="例: クラスの命名規則は？",
+            key="question_input",
+        )
+
+    with col2:
+        search_mode = st.radio("モード選択", ["🔍 RAG回答", "📖 検索のみ"], index=0)
+
+    # 実行ボタン
+    if st.button("実行", type="primary", use_container_width=True):
+        if not question.strip():
+            st.warning("⚠️ 質問を入力してください")
             return
-        with st.spinner("検索中…"):
-            res = st.session_state.vectorstore.similarity_search_with_score(q, k=top_k)
-        if not res:
-            st.info("関連文書が見つかりません")
-            return
-        for i, (doc, score) in enumerate(res, 1):
-            with st.expander(f"{i}. score {score:.3f}"):
-                st.write(doc.page_content)
+
+        # RAGチェーンの準備
+        if "rag_chain" not in st.session_state:
+            current_llm = st.session_state.get("llm", llm)
+            rag_chain, retriever = create_rag_chain(
+                st.session_state.vectorstore, current_llm
+            )
+            st.session_state.rag_chain = rag_chain
+            st.session_state.retriever = retriever
+
+        if search_mode == "🔍 RAG回答":
+            # RAGによる回答生成
+            with st.spinner("🤖 AIが回答を生成中..."):
+                try:
+                    rag_chain = st.session_state.rag_chain
+                    # TODO
+                    # invoke()とはなに？
+                    answer = rag_chain.invoke(question)
+
+                    # 関連文書も取得して表示
+                    retriever = st.session_state.retriever
+                    docs = retriever.invoke(question)
+
+                    # 回答を表示
+                    st.subheader("🤖 AI回答")
+                    st.write(answer)
+
+                    # 参照元文書を表示
+                    with st.expander("📚 参照した文書", expanded=False):
+                        for i, doc in enumerate(docs, 1):
+                            st.write(f"**文書 {i}:**")
+                            st.write(doc.page_content)
+                            st.divider()
+
+                except Exception as e:
+                    st.error(f"❌ エラーが発生しました: {str(e)}")
+                    st.info(
+                        """
+                        **トラブルシューティング:**
+                        - OpenAI APIキーが正しく設定されているか確認
+                        - ネットワーク接続を確認
+                        - 選択されたモデル（{model}）がAPI対応か確認
+                        - 使用量制限に達していないか確認
+                        """.format(
+                            model=st.session_state.get("llm", llm).model_name
+                        )
+                    )
+        else:
+            # 検索のみモード
+            with st.spinner("🔍 関連文書を検索中..."):
+                retriever = st.session_state.get("retriever")
+                if not retriever:
+                    current_llm = st.session_state.get("llm", llm)
+                    _, retriever = create_rag_chain(
+                        st.session_state.vectorstore, current_llm
+                    )
+                    st.session_state.retriever = retriever
+
+                docs = retriever.invoke(question)
+
+                if not docs:
+                    st.info("🔍 関連文書が見つかりませんでした")
+                    return
+
+                st.subheader("🔍 検索結果")
+                for i, doc in enumerate(docs, 1):
+                    with st.expander(f"📄 文書 {i}", expanded=True):
+                        st.write(doc.page_content)
+
+    # --- 統計情報 ----------------------------------------------
+    if "vectorstore" in st.session_state:
+        with st.expander("📊 システム情報", expanded=False):
+            vs = st.session_state.vectorstore
+            collection = vs._collection
+
+            st.write("**ベクトルストア情報:**")
+            st.write(f"- コレクションID: `{collection.id}`")
+            st.write(f"- 保存されているドキュメント数: {collection.count()}")
+            st.write(f"- 埋め込みモデル: `{ENBEDDING_MODEL}`")
+
+            if "rag_chain" in st.session_state:
+                current_llm_model = st.session_state.get("llm", llm).model_name
+                st.write("**RAGシステム:**")
+                st.write("- 状態: ✅ 正常稼働中")
+                st.write(f"- 使用中のLLMモデル: `{current_llm_model}`")
+                st.write("- チェーン: Retriever → Prompt → LLM → Parser")
+                st.write("- 最適化: コスト効率とパフォーマンスのバランス")
 
 
 if __name__ == "__main__":
