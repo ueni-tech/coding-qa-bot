@@ -92,6 +92,14 @@ def count_tokens(text: str, model="gpt-3.5-turbo"):
 
 @st.cache_resource
 def init_embeddings():
+    """OpenAIの埋め込みモデルを初期化する関数
+
+    埋め込みモデルとは、テキストなどのデータを多次元のベクトル（数値の配列）に変換するための機械学習モデルのこと。
+    これにより、意味的に類似したテキスト同士が近いベクトル空間上の位置にマッピングされるため、
+    検索やクラスタリング、類似度計算などに活用できる。
+    RAGなどのシステムでは、文書検索や知識検索のために
+    埋め込みモデルが重要な役割を果たす。
+    """
     return OpenAIEmbeddings(
         model=ENBEDDING_MODEL,
         openai_api_key=os.getenv("OPENAI_API_KEY"),
@@ -102,7 +110,7 @@ def init_embeddings():
 def init_llm():
     """ChatOpenAIモデルを初期化する関数"""
     return ChatOpenAI(
-        model="gpt-4o-mini",  # 2025年現在、最もコスパに優れたモデル
+        model="gpt-4o-mini",  # 2025年現在、最もコスパに優れたモデルのためデフォルトとして採用
         temperature=0,
         openai_api_key=os.getenv("OPENAI_API_KEY"),
     )
@@ -115,10 +123,14 @@ def format_docs(docs):
 
 # TODO RunnableとLCELの基礎について調べる
 # https://claude.ai/share/0cd33d5c-2d8c-4520-b17a-f0c89cf42581
-def create_rag_chain(vectorstore, llm):
-    """RAGチェーンを作成する関数"""
+def create_rag_chain(vectorstore, llm, top_k):
+    """RAGチェーンを作成する関数
+
+    RAGチェーンとは、ユーザーからの質問に対して、まず外部知識ベース（ベクトルストアなど）から関連する情報（ドキュメント）を検索（Retrieve）し、その情報をもとに生成AI（LLM）が回答を生成（Generate）する仕組みのこと。
+    これにより、モデルが学習していない最新情報や特定ドメインの知識も活用でき、より正確で信頼性の高い応答が可能になる。
+    """
     retriever = vectorstore.as_retriever(
-        search_type="similarity", search_kwargs={"k": 3}
+        search_type="similarity", search_kwargs={"k": top_k}
     )
 
     prompt = PromptTemplate.from_template(RAG_PROMPT_TEMPLATE)
@@ -222,12 +234,26 @@ def main():
     # --- サイドバー ----------------------------------------------
     with st.sidebar:
         st.header("設定")
-        pdf = st.file_uploader("📄 規約 PDF", type="pdf")
         size = st.slider("チャンクサイズ", 500, 2000, 1000, 100)
         over = st.slider("チャンク重複", 0, 500, 200, 50)
 
         st.subheader("検索設定")
         top_k = st.slider("検索件数", 1, 10, 3)
+
+        pdf = st.file_uploader("📄 規約 PDF", type="pdf")
+
+        if st.button("💣 ベクトルストアをリセット"):
+            if "vectorstore" in st.session_state:
+                uuid_now = st.session_state.vectorstore._collection.id
+                st.session_state.vectorstore._client.reset()
+                cleanup_dirs(uuid_now)
+                del st.session_state.vectorstore
+                if "rag_chain" in st.session_state:
+                    del st.session_state.rag_chain
+                if "retriever" in st.session_state:
+                    del st.session_state.retriever
+            st.success("ベクトルストアをリセットしました")
+            st.rerun()
 
         st.subheader("LLM設定")
         model_choice = st.selectbox(
@@ -271,19 +297,6 @@ def main():
 
             st.success(f"✅ モデル設定を更新しました: {model_choice}")
 
-        if st.button("💣 ベクトルストアをリセット"):
-            if "vectorstore" in st.session_state:
-                uuid_now = st.session_state.vectorstore._collection.id
-                st.session_state.vectorstore._client.reset()
-                cleanup_dirs(uuid_now)
-                del st.session_state.vectorstore
-                if "rag_chain" in st.session_state:
-                    del st.session_state.rag_chain
-                if "retriever" in st.session_state:
-                    del st.session_state.retriever
-            st.success("ベクトルストアをリセットしました")
-            st.rerun()
-
     # --- pdf アップロード処理 ----------------------------------------------
     if pdf:
         with st.spinner("PDF 解析中..."):
@@ -293,7 +306,7 @@ def main():
 
             # RAGチェーンを構築
             current_llm = st.session_state.get("llm", llm)
-            rag_chain, retriever = create_rag_chain(vs, current_llm)
+            rag_chain, retriever = create_rag_chain(vs, current_llm, top_k)
             st.session_state.rag_chain = rag_chain
             st.session_state.retriever = retriever
 
@@ -340,7 +353,7 @@ def main():
         if "rag_chain" not in st.session_state:
             current_llm = st.session_state.get("llm", llm)
             rag_chain, retriever = create_rag_chain(
-                st.session_state.vectorstore, current_llm
+                st.session_state.vectorstore, current_llm, top_k
             )
             st.session_state.rag_chain = rag_chain
             st.session_state.retriever = retriever
@@ -389,7 +402,7 @@ def main():
                 if not retriever:
                     current_llm = st.session_state.get("llm", llm)
                     _, retriever = create_rag_chain(
-                        st.session_state.vectorstore, current_llm
+                        st.session_state.vectorstore, current_llm, top_k
                     )
                     st.session_state.retriever = retriever
 
