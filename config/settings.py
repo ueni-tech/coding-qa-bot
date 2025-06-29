@@ -12,6 +12,7 @@ from chromadb.config import Settings
 load_dotenv()
 
 # ===== パス設定 =====
+# Laravelの storage_path() に相当
 BASE_DIR = Path(__file__).parent.parent
 STORAGE_DIR = BASE_DIR / "storage"
 VECTORSTORE_DIR = STORAGE_DIR / "vectorstore"
@@ -20,9 +21,19 @@ VECTORSTORE_DIR = STORAGE_DIR / "vectorstore"
 STORAGE_DIR.mkdir(exist_ok=True)
 VECTORSTORE_DIR.mkdir(exist_ok=True)
 
-
 # ===== API設定 =====
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+
+# APIキー検証関数（共通化）
+def validate_api_key() -> bool:
+    """
+    APIキーの妥当性を検証する
+
+    Returns:
+        APIキーが有効かどうか
+    """
+    return bool(OPENAI_API_KEY and OPENAI_API_KEY.strip())
 
 
 # ===== モデル設定 =====
@@ -44,7 +55,6 @@ MODELS = {
     },
 }
 
-
 # ===== ChromaDB設定 =====
 CHROMA_SETTINGS = Settings(
     allow_reset=True,
@@ -52,7 +62,6 @@ CHROMA_SETTINGS = Settings(
     persist_directory=str(VECTORSTORE_DIR),
     anonymized_telemetry=False,
 )
-
 
 # ===== テキスト処理設定 =====
 TEXT_SPLITTER_CONFIG = {
@@ -62,13 +71,11 @@ TEXT_SPLITTER_CONFIG = {
     "max_chunk_size": 2000,
 }
 
-
 # ===== 検索設定 =====
 SEARCH_CONFIG = {
     "default_top_k": 3,
     "max_top_k": 10,
 }
-
 
 # ===== UI設定 =====
 UI_CONFIG = {

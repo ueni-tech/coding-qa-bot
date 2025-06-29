@@ -1,9 +1,3 @@
-import sys
-import os
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-# test_utils.py（動作確認用）
 from app.utils import text_utils
 
 # テキスト分割のテスト
