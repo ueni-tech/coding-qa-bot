@@ -103,6 +103,8 @@ def batch_embed_texts(
     return all_embeddings
 
 
+# NOTE
+# 埋め込みは「テキストの文字数」からざっくりトークン数を推定（ユーザーがトークン数を意識しなくてよい）
 def estimate_embedding_cost(
     text_length: int, model_name: str | None = None
 ) -> dict[str, float]:
