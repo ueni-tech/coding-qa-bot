@@ -136,27 +136,28 @@ def estimate_total_cost(
         },
     }
 
+
 def validate_model_selection(
-        model_name: str, model_type: str = "chat"
-) -> tuple[bool, str]
+    model_name: str, model_type: str = "chat"
+) -> tuple[bool, str]:
     """
     モデル選択の妥当性を検証
-    
+
     Args:
         model_name: モデル名
         model_type: "chat" または "embedding"
-        
+
     Returns:
         (is_valid, message) のタプル
     """
     if model_type not in ["chat", "embedding"]:
         return False, "モデルタイプは 'chat' または 'embedding' である必要があります"
-    
+
     available_models = MODELS[model_type]["options"]
 
     if model_name not in available_models:
         return False, f"'{model_name}' は利用可能な{model_type}モデルではありません"
-    
+
     warnings = {
         "gpt-4.5-preview": "高コストモデルです。本当に必要な場合のみ使用してください",
         "gpt-4o": "高コストモデルです。よりコストパフォーマンスに優れるモデルを検討してください。",
@@ -165,16 +166,17 @@ def validate_model_selection(
     }
     if model_name in warnings:
         return True, warnings[model_name]
-    
+
     return True, "OK"
+
 
 def get_model_recommendations(use_case: str) -> dict:
     """
     ユースケースに基づくモデル推奨
-    
+
     Args:
         use_case: ユースケース（"cost", "quality", "speed"）
-        
+
     Returns:
         推奨モデル情報
     """
@@ -182,26 +184,23 @@ def get_model_recommendations(use_case: str) -> dict:
         "cost": {
             "embedding": "text-embedding-3-small",
             "chat": "gpt-4o-mini",
-            "reason": "コストを最小限に抑えながら十分な品質を確保"
+            "reason": "コストを最小限に抑えながら十分な品質を確保",
         },
         "quality": {
             "embedding": "text-embedding-3-large",
             "chat": "o3",
-            "reason": "高い精度と品質を重視"
+            "reason": "高い精度と品質を重視",
         },
         "speed": {
             "embedding": "text-embedding-3-small",
             "chat": "gpt-4.1-nano",
-            "reason": "レスポンス速度を最優先"
+            "reason": "レスポンス速度を最優先",
         },
         "balanced": {
             "embedding": "text-embedding-3-small",
             "chat": "o4-mini",
-            "reason": "コスト、品質、速度のバランスを重視"
-        }
+            "reason": "コスト、品質、速度のバランスを重視",
+        },
     }
 
-    return recommendations.get(
-        use_case,
-        recommendations["balanced"]
-    )
+    return recommendations.get(use_case, recommendations["balanced"])
