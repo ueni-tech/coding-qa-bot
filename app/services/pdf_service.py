@@ -79,7 +79,7 @@ def validate_pdf(pdf_file: BinaryIO) -> tuple[bool, str]:
         (is_valid, message) のタプル
     """
     try:
-        reader = PyPDF2.PdfFileReader(pdf_file)
+        reader = PyPDF2.PdfReader(pdf_file)
 
         if reader.is_encrypted:
             return False, "暗号化されたPDFは処理できません"
