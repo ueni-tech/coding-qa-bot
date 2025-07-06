@@ -64,7 +64,7 @@ def create_rag_chain(vectorstore: Chroma, llm: ChatOpenAI, top_k: int = 3) -> tu
     return rag_chain, retriever
 
 
-def seatch_documents(vectorstore: Chroma, query: str, top_k: int = 3) -> list:
+def search_documents(vectorstore: Chroma, query: str, top_k: int = 3) -> list:
     """
     ドキュメントを検索する（RAG生成なし）
 
