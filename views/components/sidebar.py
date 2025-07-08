@@ -135,3 +135,38 @@ def render_sidebar() -> dict[str, Any]:
         st.session_state.temperture = temperature
 
     return config
+
+
+def render_system_info():
+    """
+    システム情報を表示する（モーダル風）
+    """
+    if st.session_state.get("show_info", False):
+        with st.sidebar:
+            with st.container():
+                st.info("📊 システム情報")
+
+                if "vectorstore" in st.session_state:
+                    st.write("**ベクトルストア**: ✅ ロード済み")
+
+                    # vectorstore_repositoryをインポート
+                    from app.repositories import vectorstore_repository
+
+                    info = vectorstore_repository.get_vectorstore_info(
+                        st.session_state.vectorstore
+                    )
+
+                    if "error" not in info:
+                        st.write(f"- ドキュメント数: {info['document_count']}")
+                        st.write(f"- コレクションID: `{info['collection_id']}`")
+                else:
+                    st.write("**ベクトルストア**: ❌ 未ロード")
+
+                st.write(f"**埋め込みモデル**: {MODELS['embedding']['default']}")
+                st.write(
+                    f"**チャットモデル**: {st.session_state.get('current_model', MODELS['chat']['default'])}"
+                )
+
+                if st.button("閉じる", key="close_info"):
+                    st.session_state.show_info = False
+                    st.rerun()
