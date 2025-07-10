@@ -27,4 +27,4 @@ COPY . .
 EXPOSE 8501
 
 # Streamlitアプリ起動（開発モード: ホットリロード有効）
-CMD ["streamlit", "run", "app.py", "--server.address", "0.0.0.0", "--server.runOnSave", "true", "--server.fileWatcherType", "auto"]
+CMD ["streamlit", "run", "main.py", "--server.address", "0.0.0.0", "--server.runOnSave", "true", "--server.fileWatcherType", "auto"]
