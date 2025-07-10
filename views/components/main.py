@@ -57,3 +57,27 @@ def main():
                 )
             else:
                 st.error(f"エラー: {result['error']}")
+
+    if sidebar_config["reset_clicked"]:
+        if rag_controller.reset_system():
+            st.success(SUCCESS_MESSAGES["vectorstore_reset"])
+            st.rerun()
+        else:
+            st.error("リセットに失敗しました")
+
+    if sidebar_config["update_model"]:
+        result = rag_controller.update_model_settings(
+            sidebar_config["model_name"], sidebar_config["temperature"]
+        )
+        if result["success"]:
+            st.success(SUCCESS_MESSAGES["model_updated"].format(model=result["model"]))
+        else:
+            st.error(f"モデル更新エラー: {result['error']}")
+
+    chat_interface.render_chat_interface(
+        embeddings=embeddings, llm=llm, top_k=sidebar_config["top_k"]
+    )
+
+
+if __name__ == "__main__":
+    main()
