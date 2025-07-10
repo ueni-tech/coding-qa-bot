@@ -38,7 +38,7 @@ def process_pdf_upload(
         chunks = split_text(text, chunk_size, chunk_overlap)
 
         old_vs = st.session_state.get("vectorstore")
-        new_vs = vectorstore_repository.reset_vectorestore(old_vs, chunks, embeddings)
+        new_vs = vectorstore_repository.reset_vectorstore(old_vs, chunks, embeddings)
 
         st.session_state.vectorstore = new_vs
         token_count = count_tokens(text)

@@ -12,20 +12,17 @@ from chromadb.config import Settings
 load_dotenv()
 
 # ===== パス設定 =====
-# Laravelの storage_path() に相当
+# app.pyと同じパス構造に合わせる
 BASE_DIR = Path(__file__).parent.parent
-STORAGE_DIR = BASE_DIR / "storage"
-VECTORSTORE_DIR = STORAGE_DIR / "vectorstore"
+VECTORSTORE_DIR = BASE_DIR / "vectorstore"
 
 # ディレクトリの作成（存在しない場合）
-STORAGE_DIR.mkdir(exist_ok=True)
 VECTORSTORE_DIR.mkdir(exist_ok=True)
 
 # ===== API設定 =====
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
-# APIキー検証関数（共通化）
 def validate_api_key() -> bool:
     """
     APIキーの妥当性を検証する
@@ -37,7 +34,6 @@ def validate_api_key() -> bool:
 
 
 # ===== モデル設定 =====
-# 将来的にFastAPIでも使える設定構造
 MODELS = {
     "embedding": {
         "default": "text-embedding-3-small",
